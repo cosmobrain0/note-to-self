@@ -9,6 +9,7 @@ async fn main() -> std::io::Result<()> {
     use leptos_meta::MetaTags;
     use note_to_self::app::*;
 
+    println!("Getting dotenv");
     dotenv::dotenv().ok();
 
     let conf = get_configuration(None).unwrap();

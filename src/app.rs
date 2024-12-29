@@ -95,7 +95,7 @@ fn HomePage() -> impl IntoView {
         <For
             each={move || texts.get()}
             key={move |id| *id}
-            children={move |id| view! {<TextInputCell id={id} />}}
+            children={move |id| view! {<TextInputCell id texts />}}
         />
         <AddTextButton texts />
     }
@@ -128,7 +128,14 @@ fn AddTextButton(texts: RwSignal<Vec<i32>>) -> impl IntoView {
 }
 
 #[server(prefix = "/api")]
-async fn delete_text(id: i32) -> Result<bool, ServerFnError> {}
+async fn delete_text(id: i32) -> Result<bool, ServerFnError> {
+    sqlx::query_as("DELETE FROM text_files WHERE id = $1 RETURNING id")
+        .bind(id)
+        .fetch_all(&get_pool_from_context().await?)
+        .await
+        .map_err(|e| ServerFnError::ServerError(e.to_string()))
+        .map(|ids: Vec<(i32,)>| !ids.is_empty())
+}
 
 #[component]
 fn TextInputCell(id: i32, texts: RwSignal<Vec<i32>>) -> impl IntoView {
@@ -174,7 +181,12 @@ fn TextInputCell(id: i32, texts: RwSignal<Vec<i32>>) -> impl IntoView {
     let delete = move |_| {
         spawn_local(async move {
             let _ = delete_text(id).await;
-            if let Some((i, _)) = texts.with(|t| t.iter().enumerate().find(|(i, x)| **x == id)) {
+            if let Some(i) = texts.with_untracked(|t| {
+                t.iter()
+                    .enumerate()
+                    .find(|(i, x)| **x == id)
+                    .map(|(i, _)| i)
+            }) {
                 texts.update(|t| {
                     t.remove(i);
                 });
