@@ -18,6 +18,7 @@ leptos_router = { version = "0.7.0" }
 wasm-bindgen = "=0.2.99"
 sqlx = { version = "0.8.2", features = ["postgres", "runtime-tokio"], optional = true }
 dotenv = "0.15.0"
+serde = { version = "1.0.217", features = ["derive"] }
 
 [features]
 csr = ["leptos/csr"]

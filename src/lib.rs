@@ -1,4 +1,5 @@
 pub mod app;
+mod notebook;
 
 #[cfg(feature = "ssr")]
 #[derive(Clone)]

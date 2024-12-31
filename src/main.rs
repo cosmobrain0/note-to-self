@@ -23,11 +23,15 @@ async fn main() -> std::io::Result<()> {
             .expect("failed to connect to database"),
     };
 
+    let _: Option<()> = sqlx::query_as("CREATE EXTENSION IF NOT EXISTS pgcrypto")
+        .fetch_optional(&app_state.pool)
+        .await
+        .expect("should be able to enable encryption");
     let _: Option<()> =
         sqlx::query_as("CREATE TABLE IF NOT EXISTS text_files (id SERIAL PRIMARY KEY, text TEXT)")
             .fetch_optional(&app_state.pool)
             .await
-            .expect("Couldn't create text_file table");
+            .expect("should be able to create text_files table");
 
     HttpServer::new(move || {
         // Generate the list of routes in your Leptos App

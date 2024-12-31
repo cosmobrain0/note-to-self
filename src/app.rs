@@ -4,6 +4,9 @@ use leptos_router::{
     components::{Route, Router, Routes},
     StaticSegment, WildcardSegment,
 };
+use server_fn::error::NoCustomError;
+
+use crate::notebook::Notebook;
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -67,6 +70,19 @@ async fn save_text(text: String, id: i32) -> Result<(), ServerFnError> {
 }
 
 #[server(prefix = "/api")]
+async fn get_notebook(id: i32) -> Result<Notebook, ServerFnError> {
+    Notebook::get_from_id(&get_pool_from_context().await?, id)
+        .await
+        .map_err(|e| ServerFnError::ServerError::<NoCustomError>(e.to_string()))?
+        .map(|x| Ok(x))
+        .unwrap_or_else(|| {
+            Err(ServerFnError::ServerError(format!(
+                "Couldn't find a notebook with id {id}!"
+            )))
+        })
+}
+
+#[server(prefix = "/api")]
 async fn get_all_text_ids() -> Result<Vec<i32>, ServerFnError> {
     match sqlx::query_as("SELECT id FROM text_files")
         .fetch_all(&get_pool_from_context().await?)
@@ -80,20 +96,32 @@ async fn get_all_text_ids() -> Result<Vec<i32>, ServerFnError> {
 /// Renders the home page of your application.
 #[component]
 fn HomePage() -> impl IntoView {
-    let texts = RwSignal::new(vec![]);
+    view! {
+        <NotebookPage id=0 />
+    }
+}
+
+#[component]
+fn NotebookPage(id: i32) -> impl IntoView {
+    let notebook = RwSignal::new(None);
+    let text_ids = move || {
+        notebook.with(|notebook| {
+            notebook
+                .as_ref()
+                .map(|notebook: &Notebook| notebook.texts().map(|t| t.id()).collect::<Vec<_>>())
+        })
+    };
     Effect::new(move |_| {
         spawn_local(async move {
             println!("hey");
-            if let Ok(mut ids) = dbg!(get_all_text_ids().await) {
-                ids.sort();
-                println!("Hi!");
-                texts.set(ids);
+            if let Ok(received_notebook) = dbg!(get_notebook(id).await) {
+                notebook.set(Some(received_notebook));
             }
         })
     });
     view! {
         <For
-            each={move || texts.get()}
+            each={move || text_ids.get()}
             key={move |id| *id}
             children={move |id| view! {<TextInputCell id texts />}}
         />
