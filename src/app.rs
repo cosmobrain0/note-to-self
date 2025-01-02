@@ -1,12 +1,11 @@
-use leptos::{either::Either, html::inner_html, logging::log, prelude::*, task::spawn_local};
+use leptos::{either::Either, logging::log, prelude::*, task::spawn_local};
 use leptos_meta::{provide_meta_context, Stylesheet, Title};
 use leptos_router::{
     components::{Route, Router, Routes},
     StaticSegment, WildcardSegment,
 };
-use server_fn::error::NoCustomError;
 
-use crate::notebook::Notebook;
+use crate::notebook::{Notebook, TextFile};
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -45,7 +44,7 @@ async fn get_pool_from_context() -> Result<sqlx::Pool<sqlx::Postgres>, ServerFnE
 
 #[server(prefix = "/api")]
 async fn get_text(id: i32) -> Result<String, ServerFnError> {
-    let text: String = match sqlx::query_as("SELECT text FROM text_files WHERE id = $1")
+    let text: String = match sqlx::query_as("SELECT text FROM texts WHERE id = $1")
         .bind(id)
         .fetch_one(&get_pool_from_context().await?)
         .await
@@ -60,7 +59,7 @@ async fn get_text(id: i32) -> Result<String, ServerFnError> {
 
 #[server(prefix = "/api")]
 async fn save_text(text: String, id: i32) -> Result<(), ServerFnError> {
-    sqlx::query_as("UPDATE text_files SET text = $1 WHERE id = $2")
+    sqlx::query_as("UPDATE texts SET text = $1 WHERE id = $2")
         .bind(text)
         .bind(id)
         .fetch_optional(&get_pool_from_context().await?)
@@ -73,8 +72,8 @@ async fn save_text(text: String, id: i32) -> Result<(), ServerFnError> {
 async fn get_notebook(id: i32) -> Result<Notebook, ServerFnError> {
     Notebook::get_from_id(&get_pool_from_context().await?, id)
         .await
-        .map_err(|e| ServerFnError::ServerError::<NoCustomError>(e.to_string()))?
-        .map(|x| Ok(x))
+        .map_err(|e| ServerFnError::ServerError::<server_fn::error::NoCustomError>(e.to_string()))?
+        .map(Ok)
         .unwrap_or_else(|| {
             Err(ServerFnError::ServerError(format!(
                 "Couldn't find a notebook with id {id}!"
@@ -84,7 +83,7 @@ async fn get_notebook(id: i32) -> Result<Notebook, ServerFnError> {
 
 #[server(prefix = "/api")]
 async fn get_all_text_ids() -> Result<Vec<i32>, ServerFnError> {
-    match sqlx::query_as("SELECT id FROM text_files")
+    match sqlx::query_as("SELECT id FROM texts")
         .fetch_all(&get_pool_from_context().await?)
         .await
     {
@@ -93,11 +92,20 @@ async fn get_all_text_ids() -> Result<Vec<i32>, ServerFnError> {
     }
 }
 
+#[server(prefix = "/api")]
+async fn save_notebook(notebook: Notebook) -> Result<(), ServerFnError> {
+    println!("saving notebook!");
+    notebook
+        .save(&get_pool_from_context().await?)
+        .await
+        .map_err(|e| ServerFnError::ServerError::<server_fn::error::NoCustomError>(e.to_string()))
+}
+
 /// Renders the home page of your application.
 #[component]
 fn HomePage() -> impl IntoView {
     view! {
-        <NotebookPage id=0 />
+        <NotebookPage id=1 />
     }
 }
 
@@ -105,50 +113,74 @@ fn HomePage() -> impl IntoView {
 fn NotebookPage(id: i32) -> impl IntoView {
     let notebook = RwSignal::new(None);
     let text_ids = move || {
-        notebook.with(|notebook| {
-            notebook
-                .as_ref()
-                .map(|notebook: &Notebook| notebook.texts().map(|t| t.id()).collect::<Vec<_>>())
-        })
+        notebook
+            .with(|notebook| {
+                notebook
+                    .as_ref()
+                    .map(|notebook: &Notebook| notebook.texts().map(|t| t.id()).collect::<Vec<_>>())
+            })
+            .unwrap_or_default()
     };
     Effect::new(move |_| {
+        log!("Running the get notebook effect");
         spawn_local(async move {
-            println!("hey");
+            log!("spawn-local in the get notebook effect");
             if let Ok(received_notebook) = dbg!(get_notebook(id).await) {
+                log!("Saving some notebook");
                 notebook.set(Some(received_notebook));
             }
         })
     });
+    Effect::new(move |_| {
+        log!("Running an effect because of notebook update");
+        notebook.with(|notebook| {
+            log!("Notebook updated?");
+            if let Some(notebook) = notebook.as_ref() {
+                let notebook = notebook.clone();
+                spawn_local(async move {
+                    log!("About to save notebook!");
+                    log!("{:#?}", &notebook);
+                    save_notebook(notebook).await.unwrap();
+                })
+            }
+        });
+    });
     view! {
         <For
-            each={move || text_ids.get()}
+            each={text_ids}
             key={move |id| *id}
-            children={move |id| view! {<TextInputCell id texts />}}
+            children={move |id| view! {<TextInputCell id notebook />}}
         />
-        <AddTextButton texts />
+        <AddTextButton notebook />
     }
 }
 
 #[server(prefix = "/api")]
-async fn create_new_text() -> Result<i32, ServerFnError> {
-    sqlx::query_as("INSERT INTO text_files (text) VALUES ('New text box...') RETURNING id")
-        .fetch_one(&get_pool_from_context().await?)
-        .await
-        .map(|(id,)| id)
-        .map_err(|e| ServerFnError::ServerError(e.to_string()))
+async fn add_new_text_to_notebook(id: i32) -> Result<TextFile, ServerFnError> {
+    sqlx::query_as(
+        "INSERT INTO texts (notebook_id, text) VALUES ($1, 'New Text Box...') RETURNING id, text",
+    )
+    .bind(id)
+    .fetch_one(&get_pool_from_context().await?)
+    .await
+    .map_err(|e| ServerFnError::ServerError::<server_fn::error::NoCustomError>(e.to_string()))
+    .map(|(id, text)| TextFile::new(id, text))
 }
 
 #[component]
-fn AddTextButton(texts: RwSignal<Vec<i32>>) -> impl IntoView {
+fn AddTextButton(notebook: RwSignal<Option<Notebook>>) -> impl IntoView {
     let add_text = move || {
-        spawn_local(async move {
-            if let Ok(id) = dbg!(create_new_text().await) {
-                texts.update(|ids| {
-                    ids.push(id);
-                    ids.sort();
-                })
-            }
-        })
+        if let Some(id) = notebook.with(|notebook| notebook.as_ref().map(|notebook| notebook.id()))
+        {
+            spawn_local(async move {
+                match add_new_text_to_notebook(id).await {
+                    Ok(text) => {
+                        notebook.update(|notebook| notebook.as_mut().unwrap().add_new_text(text))
+                    }
+                    Err(e) => log!("Noooooo there was an error :( {:#?}", e),
+                }
+            })
+        }
     };
     view! {
         <span id="add-text-button" on:click={move |_| add_text()}>"+"</span>
@@ -157,7 +189,7 @@ fn AddTextButton(texts: RwSignal<Vec<i32>>) -> impl IntoView {
 
 #[server(prefix = "/api")]
 async fn delete_text(id: i32) -> Result<bool, ServerFnError> {
-    sqlx::query_as("DELETE FROM text_files WHERE id = $1 RETURNING id")
+    sqlx::query_as("DELETE FROM texts WHERE id = $1 RETURNING id")
         .bind(id)
         .fetch_all(&get_pool_from_context().await?)
         .await
@@ -165,20 +197,57 @@ async fn delete_text(id: i32) -> Result<bool, ServerFnError> {
         .map(|ids: Vec<(i32,)>| !ids.is_empty())
 }
 
+#[server(prefix = "/api")]
+async fn update_text(id: i32, text: String) -> Result<(), ServerFnError> {
+    let _: Option<()> = sqlx::query_as("UPDATE texts SET text = $1 WHERE id = $2")
+        .bind(text)
+        .bind(id)
+        .fetch_optional(&get_pool_from_context().await?)
+        .await
+        .map_err(|e| {
+            ServerFnError::ServerError::<server_fn::error::NoCustomError>(e.to_string())
+        })?;
+    Ok(())
+}
+
 #[component]
-fn TextInputCell(id: i32, texts: RwSignal<Vec<i32>>) -> impl IntoView {
-    log!("Rendering...");
-    let initial_text = OnceResource::new(async move { get_text(id).await });
+fn TextInputCell(id: i32, notebook: RwSignal<Option<Notebook>>) -> impl IntoView {
     let active = RwSignal::new(false);
     let text = RwSignal::new(String::new());
 
-    Effect::new(move |_| {
-        log!("running an effect!");
-        if let Some(Ok(x)) = initial_text.get() {
-            text.set(x);
+    Effect::new(move |updated: Option<bool>| {
+        if updated.is_some_and(|x| x) {
+            true
+        } else {
+            notebook.with(|notebook| {
+                if let Some(notebook) = notebook.as_ref() {
+                    text.set(
+                        notebook
+                            .texts()
+                            .find(|x| x.id() == id)
+                            .unwrap()
+                            .text()
+                            .to_string(),
+                    );
+                    true
+                } else {
+                    false
+                }
+            })
         }
     });
-
+    Effect::new(move |_| {
+        log!("Activity changed");
+        if !active.get() {
+            log!("inactive");
+            notebook.update(|notebook| {
+                log!("{:#?}", &notebook);
+                if let Some(notebook) = notebook.as_mut() {
+                    notebook.set_text(id, text.get());
+                }
+            });
+        }
+    });
     let inner_active = move || {
         view! {
             <textarea
@@ -201,24 +270,16 @@ fn TextInputCell(id: i32, texts: RwSignal<Vec<i32>>) -> impl IntoView {
         }
     };
     let save = move |_| {
-        spawn_local(async move {
-            let _ = save_text(text.get_untracked(), id).await;
-            active.set(false);
-        })
+        log!("Saving...");
+        active.set(false);
     };
     let delete = move |_| {
         spawn_local(async move {
-            let _ = delete_text(id).await;
-            if let Some(i) = texts.with_untracked(|t| {
-                t.iter()
-                    .enumerate()
-                    .find(|(i, x)| **x == id)
-                    .map(|(i, _)| i)
-            }) {
-                texts.update(|t| {
-                    t.remove(i);
-                });
-            }
+            notebook.update(|notebook| {
+                if let Some(notebook) = notebook.as_mut() {
+                    notebook.delete_text(id);
+                }
+            });
         });
     };
     let footer = move || {
