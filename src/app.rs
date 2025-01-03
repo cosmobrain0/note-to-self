@@ -1,10 +1,17 @@
 #![allow(non_snake_case)]
 
-use leptos::{either::Either, logging::log, prelude::*, task::spawn_local};
+use leptos::{
+    either::{Either, EitherOf4},
+    logging::log,
+    prelude::*,
+    task::spawn_local,
+};
 use leptos_meta::{provide_meta_context, Stylesheet, Title};
 use leptos_router::{
     components::{Route, Router, Routes},
-    StaticSegment, WildcardSegment,
+    hooks::use_params,
+    params::Params,
+    path, StaticSegment, WildcardSegment,
 };
 
 use crate::notebook::{Notebook, TextFile};
@@ -27,6 +34,7 @@ pub fn App() -> impl IntoView {
             <main>
                 <Routes fallback=move || "Not found.">
                     <Route path=StaticSegment("") view=HomePage/>
+                    <Route path=path!("/notebook/:id") view=NotebookPage />
                     <Route path=WildcardSegment("any") view=NotFound/>
                 </Routes>
             </main>
@@ -106,30 +114,139 @@ async fn save_notebook(notebook: Notebook) -> Result<(), ServerFnError> {
 /// Renders the home page of your application.
 #[component]
 fn HomePage() -> impl IntoView {
-    // spawn_local(async move {
-    //     test_server_function(Vec::new()).await.unwrap();
-    // });
-    // let resource =
-    //     OnceResource::new(async move { test_server_function(Vec::new()).await.unwrap() });
-    // let result = move || {
-    //     resource
-    //         .get()
-    //         .map(|x| x.to_string())
-    //         .unwrap_or_else(|| String::from("Loading..."))
-    // };
-    // view! {
-    //     <h1> "Testing server function with empty array" </h1>
-    //     <Suspense>
-    //         {result}
-    //     </Suspense>
-    // }
     view! {
-        <NotebookPage id=1 />
+        <NotebookSelectionPage />
+    }
+}
+
+#[server(prefix = "/api")]
+async fn select_notebook(notebook_name: String) -> Result<(), ServerFnError> {
+    let notebook_id: Option<i32> = sqlx::query_as("SELECT id FROM notebooks WHERE name = $1")
+        .bind(notebook_name)
+        .fetch_optional(&get_pool_from_context().await?)
+        .await
+        .map_err(|e| e.to_string())
+        .map_err(ServerFnError::<server_fn::error::NoCustomError>::ServerError)?
+        .map(|(x,)| x);
+    if let Some(notebook_id) = notebook_id {
+        leptos_actix::redirect(&format!("/notebook/{notebook_id}"));
+        Ok(())
+    } else {
+        Err(ServerFnError::ServerError(String::from(
+            "That notebook doesn't exist!",
+        )))
+    }
+}
+
+#[server(prefix = "/api")]
+async fn create_notebook(notebook_name: String) -> Result<(), ServerFnError> {
+    let pool = get_pool_from_context().await?;
+    let already_exists = sqlx::query_as("SELECT id FROM notebooks WHERE name = $1")
+        .bind(&notebook_name)
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| ServerFnError::ServerError::<server_fn::error::NoCustomError>(e.to_string()))?
+        .map(|_: (i32,)| true)
+        .unwrap_or(false);
+    if already_exists {
+        Err(ServerFnError::ServerError(
+            "That notebook already exists!".to_string(),
+        ))
+    } else {
+        let (id,): (i32,) = sqlx::query_as("INSERT INTO notebooks (name) VALUES ($1) RETURNING id")
+            .bind(notebook_name)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| {
+                ServerFnError::ServerError::<server_fn::error::NoCustomError>(e.to_string())
+            })?;
+        leptos_actix::redirect(&format!("/notebook/{id}"));
+        Ok(())
     }
 }
 
 #[component]
-fn NotebookPage(id: i32) -> impl IntoView {
+fn NotebookSelectionPage() -> impl IntoView {
+    let select_notebook = ServerAction::<SelectNotebook>::new();
+    let select_notebook_result = select_notebook.value();
+    let select_form_output = move || match select_notebook_result.get() {
+        None => EitherOf4::A(view! { <p></p> }.into_view()),
+        Some(Ok(())) => EitherOf4::B(view! { <p> "Redirecting..." </p> }),
+        Some(Err(ServerFnError::ServerError(e))) => {
+            EitherOf4::C(view! { <p> {e.to_string()} </p> })
+        }
+        Some(Err(e)) => EitherOf4::D(view! { <p> {e.to_string()} </p> }),
+    };
+
+    let create_notebook = ServerAction::<CreateNotebook>::new();
+    let create_notebook_result = create_notebook.value();
+    let create_form_output = move || match create_notebook_result.get() {
+        None => EitherOf4::A(view! { <p></p> }.into_view()),
+        Some(Ok(())) => EitherOf4::B(view! { <p> "Redirecting..." </p> }),
+        Some(Err(ServerFnError::ServerError(e))) => {
+            EitherOf4::C(view! { <p> {e.to_string()} </p> })
+        }
+        Some(Err(e)) => EitherOf4::D(view! { <p> {e.to_string()} </p> }),
+    };
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum FormType {
+        Select,
+        Create,
+    }
+
+    let form_type = RwSignal::new(FormType::Select);
+    let choose_select_notebook = move |_| form_type.set(FormType::Select);
+    let choose_create_notebook = move |_| form_type.set(FormType::Create);
+
+    view! {
+        <button on:click=choose_select_notebook> "Open an existing notebook" </button>
+        <button on:click=choose_create_notebook> "Create a new notebook" </button>
+
+        <Show when={move || form_type.get() == FormType::Select}>
+            <ActionForm action=select_notebook>
+                <h1> "Select a notebook" </h1>
+                <input type="text" id="notebook_name" name="notebook_name" placeholder="Notebook Name..." required />
+                <button type="submit"> "Search" </button>
+            </ActionForm>
+            {select_form_output}
+        </Show>
+
+        <Show when={move || form_type.get() == FormType::Create}>
+            <ActionForm action=create_notebook>
+                <h1> "Create a notebook" </h1>
+                <input type="text" id="notebook_name" name="notebook_name" placeholder="Notebook Name..." required />
+                <button type="submit"> "Search" </button>
+            </ActionForm>
+            {create_form_output}
+        </Show>
+    }
+}
+
+#[derive(Params, PartialEq, Eq)]
+struct NotebookParams {
+    id: Option<i32>,
+}
+
+#[component]
+fn NotebookPage() -> impl IntoView {
+    let params = use_params::<NotebookParams>();
+    let result = move || match params
+        .read()
+        .as_ref()
+        .ok()
+        .and_then(|params| params.id.clone())
+    {
+        Some(id) => Either::Left(view! { <NotebookComponent id /> }),
+        None => Either::Right(view! { <h1> "Notebook not found" </h1> }),
+    };
+    view! {
+        {result}
+    }
+}
+
+#[component]
+fn NotebookComponent(id: i32) -> impl IntoView {
     let notebook = RwSignal::new(None);
     let text_ids = move || {
         notebook
