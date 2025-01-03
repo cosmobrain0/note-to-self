@@ -1,3 +1,5 @@
+#![allow(non_snake_case)]
+
 use leptos::{either::Either, logging::log, prelude::*, task::spawn_local};
 use leptos_meta::{provide_meta_context, Stylesheet, Title};
 use leptos_router::{
@@ -94,7 +96,7 @@ async fn get_all_text_ids() -> Result<Vec<i32>, ServerFnError> {
 
 #[server(prefix = "/api")]
 async fn save_notebook(notebook: Notebook) -> Result<(), ServerFnError> {
-    println!("saving notebook!");
+    println!("saving notebook! {:#?}", &notebook);
     notebook
         .save(&get_pool_from_context().await?)
         .await
@@ -104,6 +106,23 @@ async fn save_notebook(notebook: Notebook) -> Result<(), ServerFnError> {
 /// Renders the home page of your application.
 #[component]
 fn HomePage() -> impl IntoView {
+    // spawn_local(async move {
+    //     test_server_function(Vec::new()).await.unwrap();
+    // });
+    // let resource =
+    //     OnceResource::new(async move { test_server_function(Vec::new()).await.unwrap() });
+    // let result = move || {
+    //     resource
+    //         .get()
+    //         .map(|x| x.to_string())
+    //         .unwrap_or_else(|| String::from("Loading..."))
+    // };
+    // view! {
+    //     <h1> "Testing server function with empty array" </h1>
+    //     <Suspense>
+    //         {result}
+    //     </Suspense>
+    // }
     view! {
         <NotebookPage id=1 />
     }
@@ -170,6 +189,7 @@ async fn add_new_text_to_notebook(id: i32) -> Result<TextFile, ServerFnError> {
 #[component]
 fn AddTextButton(notebook: RwSignal<Option<Notebook>>) -> impl IntoView {
     let add_text = move || {
+        log!("{:#?}", notebook.get());
         if let Some(id) = notebook.with(|notebook| notebook.as_ref().map(|notebook| notebook.id()))
         {
             spawn_local(async move {
@@ -185,16 +205,6 @@ fn AddTextButton(notebook: RwSignal<Option<Notebook>>) -> impl IntoView {
     view! {
         <span id="add-text-button" on:click={move |_| add_text()}>"+"</span>
     }
-}
-
-#[server(prefix = "/api")]
-async fn delete_text(id: i32) -> Result<bool, ServerFnError> {
-    sqlx::query_as("DELETE FROM texts WHERE id = $1 RETURNING id")
-        .bind(id)
-        .fetch_all(&get_pool_from_context().await?)
-        .await
-        .map_err(|e| ServerFnError::ServerError(e.to_string()))
-        .map(|ids: Vec<(i32,)>| !ids.is_empty())
 }
 
 #[server(prefix = "/api")]
@@ -214,6 +224,7 @@ async fn update_text(id: i32, text: String) -> Result<(), ServerFnError> {
 fn TextInputCell(id: i32, notebook: RwSignal<Option<Notebook>>) -> impl IntoView {
     let active = RwSignal::new(false);
     let text = RwSignal::new(String::new());
+    let size: RwSignal<Option<(i32, i32)>> = RwSignal::new(None);
 
     Effect::new(move |updated: Option<bool>| {
         if updated.is_some_and(|x| x) {
@@ -236,6 +247,7 @@ fn TextInputCell(id: i32, notebook: RwSignal<Option<Notebook>>) -> impl IntoView
             })
         }
     });
+    let textarea_ref = NodeRef::<leptos::html::Textarea>::new();
     Effect::new(move |_| {
         log!("Activity changed");
         if !active.get() {
@@ -253,6 +265,8 @@ fn TextInputCell(id: i32, notebook: RwSignal<Option<Notebook>>) -> impl IntoView
             <textarea
                 prop:value=move || text.get()
                 on:input:target=move |ev| text.set(ev.target().value())
+                style={move || if let Some(size) = size.get() { format!("width: {}px; height: {}px", size.0, size.1) } else { String::new() } + if active.get() { "" } else { "display: none;" }}
+                node_ref=textarea_ref
             >
                 {text.get_untracked()}
             </textarea>
@@ -266,11 +280,15 @@ fn TextInputCell(id: i32, notebook: RwSignal<Option<Notebook>>) -> impl IntoView
             });
         });
         view! {
-            <p node_ref=paragraph></p>
+            <p node_ref=paragraph style={move || if !active.get() { "" } else { "display: none;" }}></p>
         }
     };
     let save = move |_| {
         log!("Saving...");
+
+        if let Some(elmt) = textarea_ref.get_untracked() {
+            size.set(Some((elmt.offset_width(), elmt.offset_height())));
+        }
         active.set(false);
     };
     let delete = move |_| {

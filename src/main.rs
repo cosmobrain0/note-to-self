@@ -28,10 +28,15 @@ async fn main() -> std::io::Result<()> {
         .await
         .expect("should be able to enable encryption");
     let _: Option<()> =
-        sqlx::query_as("CREATE TABLE IF NOT EXISTS text_files (id SERIAL PRIMARY KEY, text TEXT)")
+        sqlx::query_as("CREATE TABLE IF NOT EXISTS notebooks (id SERIAL PRIMARY KEY, name TEXT)")
             .fetch_optional(&app_state.pool)
             .await
-            .expect("should be able to create text_files table");
+            .expect("should be able to create texts table");
+    let _: Option<()> =
+        sqlx::query_as("CREATE TABLE IF NOT EXISTS texts (id SERIAL PRIMARY KEY, notebook_id INT4 REFERENCES notebooks(id), text TEXT)")
+            .fetch_optional(&app_state.pool)
+            .await
+            .expect("should be able to create texts table");
 
     HttpServer::new(move || {
         // Generate the list of routes in your Leptos App

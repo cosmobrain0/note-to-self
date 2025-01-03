@@ -17,6 +17,7 @@ use leptos::server_fn::serde::{Deserialize, Serialize};
 pub struct Notebook {
     id: i32,
     name: String,
+    #[serde(default)]
     texts: Vec<TextFile>,
 }
 #[cfg(feature = "ssr")]
@@ -25,19 +26,24 @@ impl Notebook {
         pool: &sqlx::Pool<sqlx::Postgres>,
         id: i32,
     ) -> Result<Option<Self>, Error> {
-        let results: Vec<(String, i32, String)> = sqlx::query_as("SELECT name, texts.id, texts.text FROM notebooks JOIN texts ON notebooks.id = texts.notebook_id WHERE notebooks.id=$1").bind(id)
+        let notebook_name: Option<(String,)> =
+            sqlx::query_as("SELECT name FROM notebooks WHERE id = $1")
+                .bind(id)
+                .fetch_optional(pool)
+                .await?;
+        let results: Vec<(i32, String)> = sqlx::query_as("SELECT texts.id, texts.text FROM notebooks JOIN texts ON notebooks.id = texts.notebook_id WHERE notebooks.id=$1").bind(id)
             .fetch_all(pool).await?;
-        Ok(if results.is_empty() {
-            None
-        } else {
+        Ok(if let Some((notebook_name,)) = notebook_name {
             Some(Self {
                 id,
-                name: results[0].0.clone(),
+                name: notebook_name,
                 texts: results
                     .into_iter()
-                    .map(|(_, id, text)| TextFile { id, text })
+                    .map(|(id, text)| TextFile { id, text })
                     .collect(),
             })
+        } else {
+            None
         })
     }
 
@@ -72,18 +78,20 @@ impl Notebook {
             .texts()
             .map(|t| t.id.to_string())
             .reduce(|acc, val| acc + ", " + val.as_str());
-        if let Some(ids_to_keep) = ids_to_keep {
+        let _: Option<()> = if let Some(ids_to_keep) = ids_to_keep {
             let query_text =
                 format!("DELETE FROM texts WHERE id NOT IN ({ids_to_keep}) AND notebook_id = $1");
-            todo!("bind notebook_id to $1");
-            todo!("perform the query");
-            let mut query = sqlx::query_as(&query_text).bind(self.id);
+            sqlx::query_as(&query_text)
+                .bind(self.id)
+                .fetch_optional(pool)
+                .await?
         } else {
-            let query_text = format!("DELETE FROM texts WHERE notebook_id = $1");
-            todo!("bind botebook_id to $1");
-            todo!("perform the query");
-            let mut query = sqlx::query_as(&query_text).bind(self.id);
-        }
+            let query_text = "DELETE FROM texts WHERE notebook_id = $1".to_string();
+            sqlx::query_as(&query_text)
+                .bind(self.id)
+                .fetch_optional(pool)
+                .await?
+        };
         Ok(())
     }
 }

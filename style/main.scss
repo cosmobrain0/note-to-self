@@ -1,6 +1,7 @@
 body {
 	font-family: sans-serif;
 	text-align: center;
+	background: #222;
 }
 
 * {
@@ -24,6 +25,8 @@ body {
 			background: #333;
 			border: 2px solid #777;
 			color: #ccc;
+			width: 70%;
+			min-height: 5em;
 		}
 
 		textarea:focus {
