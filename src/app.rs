@@ -4,6 +4,7 @@ use leptos::{
     either::{Either, EitherOf4},
     logging::log,
     prelude::*,
+    tachys::dom::window,
     task::spawn_local,
 };
 use leptos_meta::{provide_meta_context, Stylesheet, Title};
@@ -13,6 +14,7 @@ use leptos_router::{
     params::Params,
     path, StaticSegment, WildcardSegment,
 };
+use wasm_bindgen::{prelude::Closure, JsCast};
 
 use crate::notebook::{Notebook, TextFile};
 
@@ -169,24 +171,100 @@ async fn create_notebook(notebook_name: String) -> Result<(), ServerFnError> {
 fn NotebookSelectionPage() -> impl IntoView {
     let select_notebook = ServerAction::<SelectNotebook>::new();
     let select_notebook_result = select_notebook.value();
-    let select_form_output = move || match select_notebook_result.get() {
-        None => EitherOf4::A(view! { <p></p> }.into_view()),
-        Some(Ok(())) => EitherOf4::B(view! { <p> "Redirecting..." </p> }),
-        Some(Err(ServerFnError::ServerError(e))) => {
-            EitherOf4::C(view! { <p> {e.to_string()} </p> })
+    let select_notebook_loading = select_notebook.pending();
+    let select_notebook_loaded_time = RwSignal::new(None);
+    Effect::new(move |_| {
+        if select_notebook_loading.get() {
+            let start = window()
+                .performance()
+                .expect("should be able to get performance api")
+                .now();
+            select_notebook_loaded_time.set(Some(start));
+            spawn_local(async move {
+                // std::thread::sleep(std::time::Duration::from_secs(5));
+                let reset_time = Closure::<dyn Fn()>::new(move || {
+                    if select_notebook_loaded_time
+                        .try_get_untracked()
+                        .flatten()
+                        .is_some_and(|t| t == start)
+                    {
+                        select_notebook_loaded_time.set(None);
+                    }
+                });
+                window()
+                    .set_timeout_with_callback_and_timeout_and_arguments_0(
+                        reset_time.as_ref().unchecked_ref(),
+                        2000,
+                    )
+                    .expect("should be able to set timeout");
+                reset_time.forget();
+            })
         }
-        Some(Err(e)) => EitherOf4::D(view! { <p> {e.to_string()} </p> }),
+    });
+    let select_form_output = move || {
+        if select_notebook_loaded_time.get().is_some() {
+            match select_notebook_result.get() {
+                None => EitherOf4::A(view! { <p></p> }),
+                Some(Ok(())) => EitherOf4::B(view! { <p> "Redirecting..." </p> }),
+                Some(Err(ServerFnError::ServerError(e))) => {
+                    EitherOf4::C(view! { <p class="error-message"> {e.to_string()} </p> })
+                }
+                Some(Err(e)) => {
+                    EitherOf4::D(view! { <p class="error-message"> {e.to_string()} </p> })
+                }
+            }
+        } else {
+            EitherOf4::A(view! { <p></p> })
+        }
     };
 
     let create_notebook = ServerAction::<CreateNotebook>::new();
     let create_notebook_result = create_notebook.value();
-    let create_form_output = move || match create_notebook_result.get() {
-        None => EitherOf4::A(view! { <p></p> }.into_view()),
-        Some(Ok(())) => EitherOf4::B(view! { <p> "Redirecting..." </p> }),
-        Some(Err(ServerFnError::ServerError(e))) => {
-            EitherOf4::C(view! { <p> {e.to_string()} </p> })
+    let create_notebook_loading = create_notebook.pending();
+    let create_notebook_loaded_time = RwSignal::new(None);
+    Effect::new(move |_| {
+        if create_notebook_loading.get() {
+            let start = window()
+                .performance()
+                .expect("should be able to get performance api")
+                .now();
+            create_notebook_loaded_time.set(Some(start));
+            spawn_local(async move {
+                // std::thread::sleep(std::time::Duration::from_secs(5));
+                let reset_time = Closure::<dyn Fn()>::new(move || {
+                    if create_notebook_loaded_time
+                        .try_get_untracked()
+                        .flatten()
+                        .is_some_and(|t| t == start)
+                    {
+                        create_notebook_loaded_time.set(None);
+                    }
+                });
+                window()
+                    .set_timeout_with_callback_and_timeout_and_arguments_0(
+                        reset_time.as_ref().unchecked_ref(),
+                        2000,
+                    )
+                    .expect("should be able to set timeout");
+                reset_time.forget();
+            })
         }
-        Some(Err(e)) => EitherOf4::D(view! { <p> {e.to_string()} </p> }),
+    });
+    let create_form_output = move || {
+        if create_notebook_loaded_time.get().is_some() {
+            match create_notebook_result.get() {
+                None => EitherOf4::A(view! { <p></p> }),
+                Some(Ok(())) => EitherOf4::B(view! { <p> "Redirecting..." </p> }),
+                Some(Err(ServerFnError::ServerError(e))) => {
+                    EitherOf4::C(view! { <p class="error-message"> {e.to_string()} </p> })
+                }
+                Some(Err(e)) => {
+                    EitherOf4::D(view! { <p class="error-message"> {e.to_string()} </p> })
+                }
+            }
+        } else {
+            EitherOf4::A(view! { <p></p> })
+        }
     };
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -200,26 +278,30 @@ fn NotebookSelectionPage() -> impl IntoView {
     let choose_create_notebook = move |_| form_type.set(FormType::Create);
 
     view! {
-        <button on:click=choose_select_notebook> "Open an existing notebook" </button>
-        <button on:click=choose_create_notebook> "Create a new notebook" </button>
+        <div id="notebook-page">
+            <div id="notebook-page-options">
+                <button on:click=choose_select_notebook class:active={move || form_type.get() == FormType::Select}> "Open an existing notebook" </button>
+                <button on:click=choose_create_notebook class:active={move || form_type.get() == FormType::Create}> "Create a new notebook" </button>
+            </div>
 
-        <Show when={move || form_type.get() == FormType::Select}>
-            <ActionForm action=select_notebook>
-                <h1> "Select a notebook" </h1>
-                <input type="text" id="notebook_name" name="notebook_name" placeholder="Notebook Name..." required />
-                <button type="submit"> "Search" </button>
-            </ActionForm>
-            {select_form_output}
-        </Show>
+            <Show when={move || form_type.get() == FormType::Select}>
+                <ActionForm action=select_notebook>
+                    <h1> "Select a notebook" </h1>
+                    <input type="text" id="notebook_name" name="notebook_name" placeholder="Notebook Name..." required />
+                    <button type="submit"> "Search" </button>
+                </ActionForm>
+                {select_form_output}
+            </Show>
 
-        <Show when={move || form_type.get() == FormType::Create}>
-            <ActionForm action=create_notebook>
-                <h1> "Create a notebook" </h1>
-                <input type="text" id="notebook_name" name="notebook_name" placeholder="Notebook Name..." required />
-                <button type="submit"> "Search" </button>
-            </ActionForm>
-            {create_form_output}
-        </Show>
+            <Show when={move || form_type.get() == FormType::Create}>
+                <ActionForm action=create_notebook>
+                    <h1> "Create a notebook" </h1>
+                    <input type="text" id="notebook_name" name="notebook_name" placeholder="Notebook Name..." required />
+                    <button type="submit"> "Create" </button>
+                </ActionForm>
+                {create_form_output}
+            </Show>
+        </div>
     }
 }
 
