@@ -376,6 +376,14 @@ fn NotebookPage() -> impl IntoView {
 #[component]
 fn NotebookComponent(id: i32) -> impl IntoView {
     let notebook = RwSignal::new(None);
+    let notebook_name = move || {
+        notebook.with(|notebook| {
+            notebook
+                .as_ref()
+                .map(|notebook: &Notebook| notebook.name().to_string())
+                .unwrap_or_default()
+        })
+    };
     let text_ids = move || {
         notebook
             .with(|notebook| {
@@ -417,6 +425,14 @@ fn NotebookComponent(id: i32) -> impl IntoView {
         });
     });
     view! {
+        <div class="notebook-header">
+            <div class="left">
+                <a href="/"> <h1> "home" </h1> </a>
+            </div>
+            <div class="center">
+                <h1> {notebook_name} </h1>
+            </div>
+        </div>
         <For
             each={text_ids}
             key={move |id| *id}

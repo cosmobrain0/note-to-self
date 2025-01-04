@@ -110,3 +110,20 @@ h1, h2, h3, h4, h5, h6, p, span {
 		color: #c42;
 	}
 }
+
+.notebook-header {
+	position: relative;
+	display: table-cell;
+	align-content: center;
+	width: 100vw;
+	vertical-align: middle;
+	a {
+		color: #ccc;
+		text-decoration: none;
+	}
+	.left {
+		margin: auto;
+		position: absolute;
+		float: left;
+	}
+}
