@@ -1,5 +1,7 @@
 #![allow(non_snake_case)]
 
+use std::str::FromStr;
+
 use leptos::{
     either::{Either, EitherOf4},
     logging::log,
@@ -10,9 +12,9 @@ use leptos::{
 use leptos_meta::{provide_meta_context, Stylesheet, Title};
 use leptos_router::{
     components::{Route, Router, Routes},
-    hooks::use_params,
+    hooks::{use_navigate, use_params},
     params::Params,
-    path, StaticSegment, WildcardSegment,
+    path, NavigateOptions, StaticSegment, WildcardSegment,
 };
 use wasm_bindgen::{prelude::Closure, JsCast};
 
@@ -45,72 +47,92 @@ pub fn App() -> impl IntoView {
 }
 
 #[cfg(feature = "ssr")]
-async fn get_pool_from_context() -> Result<sqlx::Pool<sqlx::Postgres>, ServerFnError> {
+async fn get_pool_from_context_with_custom_error_type<E>(
+) -> Result<sqlx::Pool<sqlx::Postgres>, ServerFnError<E>> {
     match use_context::<crate::AppState>() {
         Some(crate::AppState { pool }) => Ok(pool),
-        None => Err(ServerFnError::ServerError(String::from(
+        None => Err(ServerFnError::ServerError::<E>(String::from(
             "Expected app state context",
         ))),
     }
 }
 
-#[server(prefix = "/api")]
-async fn get_text(id: i32) -> Result<String, ServerFnError> {
-    let text: String = match sqlx::query_as("SELECT text FROM texts WHERE id = $1")
-        .bind(id)
-        .fetch_one(&get_pool_from_context().await?)
-        .await
-    {
-        Ok((text,)) => text,
-        Err(e) => {
-            return Err(ServerFnError::ServerError(e.to_string()));
+#[cfg(feature = "ssr")]
+#[inline]
+async fn get_pool_from_context() -> Result<sqlx::Pool<sqlx::Postgres>, ServerFnError> {
+    get_pool_from_context_with_custom_error_type::<server_fn::error::NoCustomError>().await
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct NoAccessToNotebookError;
+impl std::fmt::Display for NoAccessToNotebookError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Not authorised to access that notebook!")
+    }
+}
+impl FromStr for NoAccessToNotebookError {
+    type Err = ();
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        if s == Self::to_string(&NoAccessToNotebookError {}).as_str() {
+            Ok(Self)
+        } else {
+            Err(())
         }
+    }
+}
+
+#[server(prefix = "/api")]
+async fn get_notebook(id: i32) -> Result<Notebook, ServerFnError<NoAccessToNotebookError>> {
+    let Ok(session): Result<actix_session::Session, _> = leptos_actix::extract().await else {
+        return Err(ServerFnError::ServerError::<NoAccessToNotebookError>(
+            "can't get session from request!".to_string(),
+        ));
     };
-    Ok(text)
-}
-
-#[server(prefix = "/api")]
-async fn save_text(text: String, id: i32) -> Result<(), ServerFnError> {
-    sqlx::query_as("UPDATE texts SET text = $1 WHERE id = $2")
-        .bind(text)
-        .bind(id)
-        .fetch_optional(&get_pool_from_context().await?)
+    if dbg!(session
+        .get("notebook_id")
+        .expect("Should be able to get id from session"))
+    .is_some_and(|notebook_id: i32| notebook_id == id)
+    {
+        Notebook::get_from_id(
+            &get_pool_from_context_with_custom_error_type::<NoAccessToNotebookError>().await?,
+            id,
+        )
         .await
-        .map(|_: Option<()>| ())
-        .map_err(|e| ServerFnError::ServerError(e.to_string()))
-}
-
-#[server(prefix = "/api")]
-async fn get_notebook(id: i32) -> Result<Notebook, ServerFnError> {
-    Notebook::get_from_id(&get_pool_from_context().await?, id)
-        .await
-        .map_err(|e| ServerFnError::ServerError::<server_fn::error::NoCustomError>(e.to_string()))?
+        .map_err(|e| ServerFnError::ServerError::<NoAccessToNotebookError>(e.to_string()))?
         .map(Ok)
         .unwrap_or_else(|| {
-            Err(ServerFnError::ServerError(format!(
-                "Couldn't find a notebook with id {id}!"
-            )))
+            Err(ServerFnError::ServerError::<NoAccessToNotebookError>(
+                format!("Couldn't find a notebook with id {id}!"),
+            ))
         })
-}
-
-#[server(prefix = "/api")]
-async fn get_all_text_ids() -> Result<Vec<i32>, ServerFnError> {
-    match sqlx::query_as("SELECT id FROM texts")
-        .fetch_all(&get_pool_from_context().await?)
-        .await
-    {
-        Ok(ids) => Ok(ids.into_iter().map(|(x,)| x).collect()),
-        Err(e) => Err(ServerFnError::ServerError(e.to_string())),
+    } else {
+        leptos_actix::redirect("/");
+        Err(ServerFnError::WrappedServerError(NoAccessToNotebookError))
     }
 }
 
 #[server(prefix = "/api")]
 async fn save_notebook(notebook: Notebook) -> Result<(), ServerFnError> {
     println!("saving notebook! {:#?}", &notebook);
-    notebook
-        .save(&get_pool_from_context().await?)
-        .await
-        .map_err(|e| ServerFnError::ServerError::<server_fn::error::NoCustomError>(e.to_string()))
+    let session: actix_session::Session = leptos_actix::extract().await?;
+    if dbg!(session
+        .get("notebook_id")
+        .expect("Should be able to get id from session"))
+    .is_some_and(|notebook_id: i32| notebook_id == notebook.id())
+    {
+        notebook
+            .save(&get_pool_from_context().await?)
+            .await
+            .map_err(|e| {
+                ServerFnError::ServerError::<server_fn::error::NoCustomError>(e.to_string())
+            })
+    } else {
+        leptos_actix::redirect("/");
+        Err(ServerFnError::ServerError(
+            "You don't have access to that notebook!".to_string(),
+        ))
+    }
 }
 
 /// Renders the home page of your application.
@@ -123,6 +145,8 @@ fn HomePage() -> impl IntoView {
 
 #[server(prefix = "/api")]
 async fn select_notebook(notebook_name: String) -> Result<(), ServerFnError> {
+    use leptos_actix::extract;
+    let session: actix_session::Session = extract().await?;
     let notebook_id: Option<i32> = sqlx::query_as("SELECT id FROM notebooks WHERE name = $1")
         .bind(notebook_name)
         .fetch_optional(&get_pool_from_context().await?)
@@ -131,6 +155,9 @@ async fn select_notebook(notebook_name: String) -> Result<(), ServerFnError> {
         .map_err(ServerFnError::<server_fn::error::NoCustomError>::ServerError)?
         .map(|(x,)| x);
     if let Some(notebook_id) = notebook_id {
+        session
+            .insert("notebook_id", notebook_id)
+            .expect("failed to set notebook id");
         leptos_actix::redirect(&format!("/notebook/{notebook_id}"));
         Ok(())
     } else {
@@ -142,6 +169,8 @@ async fn select_notebook(notebook_name: String) -> Result<(), ServerFnError> {
 
 #[server(prefix = "/api")]
 async fn create_notebook(notebook_name: String) -> Result<(), ServerFnError> {
+    use leptos_actix::extract;
+    let session: actix_session::Session = extract().await?;
     let pool = get_pool_from_context().await?;
     let already_exists = sqlx::query_as("SELECT id FROM notebooks WHERE name = $1")
         .bind(&notebook_name)
@@ -162,6 +191,9 @@ async fn create_notebook(notebook_name: String) -> Result<(), ServerFnError> {
             .map_err(|e| {
                 ServerFnError::ServerError::<server_fn::error::NoCustomError>(e.to_string())
             })?;
+        session
+            .insert("notebook_id", id)
+            .expect("failed to set notebook id");
         leptos_actix::redirect(&format!("/notebook/{id}"));
         Ok(())
     }
@@ -340,12 +372,19 @@ fn NotebookComponent(id: i32) -> impl IntoView {
             .unwrap_or_default()
     };
     Effect::new(move |_| {
+        let navigate = use_navigate();
         log!("Running the get notebook effect");
         spawn_local(async move {
             log!("spawn-local in the get notebook effect");
-            if let Ok(received_notebook) = dbg!(get_notebook(id).await) {
-                log!("Saving some notebook");
-                notebook.set(Some(received_notebook));
+            match get_notebook(id).await {
+                Ok(received_notebook) => {
+                    log!("Saving some notebook");
+                    notebook.set(Some(received_notebook));
+                }
+                Err(ServerFnError::WrappedServerError(NoAccessToNotebookError)) => {
+                    (navigate)("/", NavigateOptions::default());
+                }
+                Err(_) => (), // not really sure what to do here?
             }
         })
     });
@@ -375,14 +414,26 @@ fn NotebookComponent(id: i32) -> impl IntoView {
 
 #[server(prefix = "/api")]
 async fn add_new_text_to_notebook(id: i32) -> Result<TextFile, ServerFnError> {
-    sqlx::query_as(
-        "INSERT INTO texts (notebook_id, text) VALUES ($1, 'New Text Box...') RETURNING id, text",
-    )
-    .bind(id)
-    .fetch_one(&get_pool_from_context().await?)
-    .await
-    .map_err(|e| ServerFnError::ServerError::<server_fn::error::NoCustomError>(e.to_string()))
-    .map(|(id, text)| TextFile::new(id, text))
+    let session: actix_session::Session = leptos_actix::extract().await?;
+    if session
+        .get("notebook_id")
+        .expect("should be able to get notebook id from session")
+        .is_some_and(|notebook_id: i32| notebook_id == id)
+    {
+        sqlx::query_as(
+            "INSERT INTO texts (notebook_id, text) VALUES ($1, 'New Text Box...') RETURNING id, text",
+        )
+        .bind(id)
+        .fetch_one(&get_pool_from_context().await?)
+        .await
+        .map_err(|e| ServerFnError::ServerError::<server_fn::error::NoCustomError>(e.to_string()))
+        .map(|(id, text)| TextFile::new(id, text))
+    } else {
+        leptos_actix::redirect("/");
+        Err(ServerFnError::ServerError(
+            "You don't have access to that notebook!".to_string(),
+        ))
+    }
 }
 
 #[component]
@@ -404,19 +455,6 @@ fn AddTextButton(notebook: RwSignal<Option<Notebook>>) -> impl IntoView {
     view! {
         <span id="add-text-button" on:click={move |_| add_text()}>"+"</span>
     }
-}
-
-#[server(prefix = "/api")]
-async fn update_text(id: i32, text: String) -> Result<(), ServerFnError> {
-    let _: Option<()> = sqlx::query_as("UPDATE texts SET text = $1 WHERE id = $2")
-        .bind(text)
-        .bind(id)
-        .fetch_optional(&get_pool_from_context().await?)
-        .await
-        .map_err(|e| {
-            ServerFnError::ServerError::<server_fn::error::NoCustomError>(e.to_string())
-        })?;
-    Ok(())
 }
 
 #[component]

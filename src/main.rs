@@ -2,6 +2,7 @@
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     use actix_files::Files;
+    use actix_session::{storage::CookieSessionStore, SessionMiddleware};
     use actix_web::*;
     use leptos::config::get_configuration;
     use leptos::prelude::*;
@@ -45,6 +46,13 @@ async fn main() -> std::io::Result<()> {
             .fetch_optional(&app_state.pool)
             .await
             .expect("should be able to create texts table");
+    let secret_key = actix_web::cookie::Key::from(
+        std::env::var("SECRET_KEY_SESSION_MIDDLEWARE")
+            .expect("should be able to load session secret key")
+            .bytes()
+            .collect::<Vec<_>>()
+            .as_slice(),
+    );
 
     HttpServer::new(move || {
         // Generate the list of routes in your Leptos App
@@ -90,6 +98,7 @@ async fn main() -> std::io::Result<()> {
             })
             .app_data(web::Data::new(leptos_options.to_owned()))
             .app_data(web::Data::new(app_state.clone()))
+            .wrap(SessionMiddleware::new(CookieSessionStore::default(), secret_key.clone()))
         //.wrap(middleware::Compress::default())
     })
     .bind(&addr)?
