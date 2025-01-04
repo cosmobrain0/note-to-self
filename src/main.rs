@@ -23,6 +23,14 @@ async fn main() -> std::io::Result<()> {
             .expect("failed to connect to database"),
     };
 
+    let _: Option<()> = sqlx::query_as("DROP TABLE IF EXISTS text_file")
+        .fetch_optional(&app_state.pool)
+        .await
+        .expect("should be able to drop table text_file");
+    let _: Option<()> = sqlx::query_as("DROP TABLE IF EXISTS text_files")
+        .fetch_optional(&app_state.pool)
+        .await
+        .expect("should be able to drop table text_files");
     let _: Option<()> = sqlx::query_as("CREATE EXTENSION IF NOT EXISTS pgcrypto")
         .fetch_optional(&app_state.pool)
         .await

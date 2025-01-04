@@ -77,24 +77,32 @@ h1, h2, h3, h4, h5, h6, p, span {
 
 #notebook-page {
 	#notebook-page-options {
-		button {
-			outline: 2px solid #ccc;
-			outline-offset: 0px;
-			background: transparent;
-			color: #ccc;
-			padding: 0.5em;
-			margin: 1.5em;
-			border: none;
-			transition: 200ms;
-		}
-		button:hover {
-			outline-offset: 0.5em;
-		}
-		button.active {
-			outline-offset: 0.5em;
-			color: #0c7;
-			outline-color: #0c7;
-		}
+	}
+	button {
+		outline: 2px solid #ccc;
+		outline-offset: 0px;
+		background: transparent;
+		color: #ccc;
+		padding: 0.5em;
+		margin: 1.5em;
+		border: none;
+		transition: 200ms;
+	}
+	button:hover {
+		outline-offset: 0.25em;
+	}
+	button.active {
+		outline-offset: 0.5em;
+		color: #0c7;
+		outline-color: #0c7;
+	}
+
+	input {
+		background: #222;
+		outline: 2px solid #ccc;
+		outline-offset: 0.2em;
+		color: #ccc;
+		border: none;
 	}
 
 	.error-message {
