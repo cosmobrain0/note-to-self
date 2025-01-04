@@ -525,6 +525,10 @@ fn TextInputCell(id: i32, notebook: RwSignal<Option<Notebook>>) -> impl IntoView
                     notebook.set_text(id, text.get());
                 }
             });
+        } else {
+            if let Some(textarea_ref) = textarea_ref.get() {
+                let _ = textarea_ref.focus();
+            }
         }
     });
     let inner_active = move || {

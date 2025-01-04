@@ -37,7 +37,8 @@ h1, h2, h3, h4, h5, h6, p, span {
 		textarea {
 			margin: auto;
 			background: #333;
-			border: 1px solid #777;
+			/* border: 1px solid #777; */
+			border: none;
 			color: #ccc;
 			width: 70%;
 			min-height: 5em;
