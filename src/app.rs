@@ -144,11 +144,15 @@ fn HomePage() -> impl IntoView {
 }
 
 #[server(prefix = "/api")]
-async fn select_notebook(notebook_name: String) -> Result<(), ServerFnError> {
+async fn select_notebook(
+    notebook_name: String,
+    notebook_password: String,
+) -> Result<(), ServerFnError> {
     use leptos_actix::extract;
     let session: actix_session::Session = extract().await?;
-    let notebook_id: Option<i32> = sqlx::query_as("SELECT id FROM notebooks WHERE name = $1")
+    let notebook_id: Option<i32> = sqlx::query_as("SELECT id FROM notebooks WHERE UPPER(name) = UPPER($1) AND password_hash = digest($2, 'sha256')")
         .bind(notebook_name)
+        .bind(notebook_password)
         .fetch_optional(&get_pool_from_context().await?)
         .await
         .map_err(|e| e.to_string())
@@ -162,17 +166,20 @@ async fn select_notebook(notebook_name: String) -> Result<(), ServerFnError> {
         Ok(())
     } else {
         Err(ServerFnError::ServerError(String::from(
-            "That notebook doesn't exist!",
+            "The notebook name or password is incorrect!",
         )))
     }
 }
 
 #[server(prefix = "/api")]
-async fn create_notebook(notebook_name: String) -> Result<(), ServerFnError> {
+async fn create_notebook(
+    notebook_name: String,
+    notebook_password: String,
+) -> Result<(), ServerFnError> {
     use leptos_actix::extract;
     let session: actix_session::Session = extract().await?;
     let pool = get_pool_from_context().await?;
-    let already_exists = sqlx::query_as("SELECT id FROM notebooks WHERE name = $1")
+    let already_exists = sqlx::query_as("SELECT id FROM notebooks WHERE UPPER(name) = UPPER($1)")
         .bind(&notebook_name)
         .fetch_optional(&pool)
         .await
@@ -184,8 +191,9 @@ async fn create_notebook(notebook_name: String) -> Result<(), ServerFnError> {
             "That notebook already exists!".to_string(),
         ))
     } else {
-        let (id,): (i32,) = sqlx::query_as("INSERT INTO notebooks (name) VALUES ($1) RETURNING id")
+        let (id,): (i32,) = sqlx::query_as("INSERT INTO notebooks (name, password_hash) VALUES ($1, digest($2, 'sha256')) RETURNING id")
             .bind(notebook_name)
+            .bind(notebook_password)
             .fetch_one(&pool)
             .await
             .map_err(|e| {
@@ -320,6 +328,9 @@ fn NotebookSelectionPage() -> impl IntoView {
                 <ActionForm action=select_notebook>
                     <h1> "Select a notebook" </h1>
                     <input type="text" id="notebook_name" name="notebook_name" placeholder="Notebook Name..." required />
+                    <br />
+                    <input type="password" id="notebook_password" name="notebook_password" placeholder="Notebook Password..." required />
+                    <br />
                     <button type="submit"> "Search" </button>
                 </ActionForm>
                 {select_form_output}
@@ -329,6 +340,9 @@ fn NotebookSelectionPage() -> impl IntoView {
                 <ActionForm action=create_notebook>
                     <h1> "Create a notebook" </h1>
                     <input type="text" id="notebook_name" name="notebook_name" placeholder="Notebook Name..." required />
+                    <br />
+                    <input type="password" id="notebook_password" name="notebook_password" placeholder="Notebook Password..." required />
+                    <br />
                     <button type="submit"> "Create" </button>
                 </ActionForm>
                 {create_form_output}

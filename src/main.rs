@@ -37,7 +37,7 @@ async fn main() -> std::io::Result<()> {
         .await
         .expect("should be able to enable encryption");
     let _: Option<()> =
-        sqlx::query_as("CREATE TABLE IF NOT EXISTS notebooks (id SERIAL PRIMARY KEY, name TEXT)")
+        sqlx::query_as("CREATE TABLE IF NOT EXISTS notebooks (id SERIAL PRIMARY KEY, name TEXT, password_hash BYTEA)")
             .fetch_optional(&app_state.pool)
             .await
             .expect("should be able to create texts table");
