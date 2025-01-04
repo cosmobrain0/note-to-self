@@ -22,15 +22,27 @@ h1, h2, h3, h4, h5, h6, p, span {
 
 .text-input-cell {
 	position: relative;
+	width: 100%;
 	.text-input-cell-text {
+		display: flex;
 		padding: 0.3em;
+		align-items: center;
+		width: 100%;
+		p {
+			width: 70%;
+			margin: auto;
+		}
 		min-height: 5em;
+		/* max-width: 70%; */
 		textarea {
+			margin: auto;
 			background: #333;
-			border: 2px solid #777;
+			border: 1px solid #777;
 			color: #ccc;
 			width: 70%;
 			min-height: 5em;
+			font: inherit;
+			text-align: center;
 		}
 
 		textarea:focus {
@@ -76,8 +88,6 @@ h1, h2, h3, h4, h5, h6, p, span {
 }
 
 #notebook-page {
-	#notebook-page-options {
-	}
 	button {
 		outline: 2px solid #ccc;
 		outline-offset: 0px;
