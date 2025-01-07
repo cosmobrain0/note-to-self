@@ -1,6 +1,6 @@
 [package]
 name = "note-to-self"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2021"
 
 [lib]
@@ -20,10 +20,14 @@ sqlx = { version = "0.8.2", features = ["postgres", "runtime-tokio"], optional =
 dotenv = "0.15.0"
 serde = { version = "1.0.217", features = ["derive"] }
 actix-session = { version = "0.10.1", features = ["cookie-session"], optional = true }
+wasm-bindgen-futures = "0.4.49"
+gloo-timers = { version = "0.3.0", features = ["futures"] }
+js-sys = "0.3.76"
+gloo-file = { version = "0.3.0", features = ["futures", "mime"] }
 
 [dependencies.web-sys]
 version = "0.3"
-features = ['Performance']
+features = ['Performance', 'Navigator', 'MediaDevices', 'MediaStreamConstraints', 'BlobEvent', 'MediaStream', 'MediaRecorder', 'BlobPropertyBag', 'File', 'FilePropertyBag', 'MediaSource', 'Url', 'SourceBuffer']
 
 [features]
 csr = ["leptos/csr"]

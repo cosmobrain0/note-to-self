@@ -24,28 +24,6 @@ async fn main() -> std::io::Result<()> {
             .expect("failed to connect to database"),
     };
 
-    let _: Option<()> = sqlx::query_as("DROP TABLE IF EXISTS text_file")
-        .fetch_optional(&app_state.pool)
-        .await
-        .expect("should be able to drop table text_file");
-    let _: Option<()> = sqlx::query_as("DROP TABLE IF EXISTS text_files")
-        .fetch_optional(&app_state.pool)
-        .await
-        .expect("should be able to drop table text_files");
-    let _: Option<()> = sqlx::query_as("CREATE EXTENSION IF NOT EXISTS pgcrypto")
-        .fetch_optional(&app_state.pool)
-        .await
-        .expect("should be able to enable encryption");
-    let _: Option<()> =
-        sqlx::query_as("CREATE TABLE IF NOT EXISTS notebooks (id SERIAL PRIMARY KEY, name TEXT, password_hash BYTEA)")
-            .fetch_optional(&app_state.pool)
-            .await
-            .expect("should be able to create texts table");
-    let _: Option<()> =
-        sqlx::query_as("CREATE TABLE IF NOT EXISTS texts (id SERIAL PRIMARY KEY, notebook_id INT4 REFERENCES notebooks(id), text TEXT)")
-            .fetch_optional(&app_state.pool)
-            .await
-            .expect("should be able to create texts table");
     let secret_key = actix_web::cookie::Key::from(
         std::env::var("SECRET_KEY_SESSION_MIDDLEWARE")
             .expect("should be able to load session secret key")

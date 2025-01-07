@@ -1,7 +1,8 @@
 #![allow(non_snake_case)]
 
-use std::str::FromStr;
+use std::{cell::RefCell, rc::Rc, str::FromStr, time::Duration};
 
+use gloo_timers::future::sleep;
 use leptos::{
     either::{Either, EitherOf4},
     logging::log,
@@ -16,7 +17,11 @@ use leptos_router::{
     params::Params,
     path, NavigateOptions, StaticSegment, WildcardSegment,
 };
-use wasm_bindgen::{prelude::Closure, JsCast};
+use wasm_bindgen::{prelude::Closure, JsCast, JsValue};
+use wasm_bindgen_futures::JsFuture;
+use web_sys::{
+    Blob, BlobPropertyBag, HtmlAnchorElement, MediaDevices, MediaStreamConstraints, Navigator,
+};
 
 use crate::notebook::{Notebook, TextFile};
 
@@ -139,7 +144,100 @@ async fn save_notebook(notebook: Notebook) -> Result<(), ServerFnError> {
 #[component]
 fn HomePage() -> impl IntoView {
     view! {
-        <NotebookSelectionPage />
+        <AudioRecordingComponent />
+        // <NotebookSelectionPage />
+    }
+}
+
+#[component]
+fn AudioRecordingComponent() -> impl IntoView {
+    let recording = RwSignal::new(false);
+    let start_recording = move || {
+        log!("Recording stuff...");
+        recording.set(true);
+        let navigator: Navigator = window().navigator();
+        let media_devices: MediaDevices = navigator
+            .media_devices()
+            .expect("Should be able to get media devices");
+        let constraints = MediaStreamConstraints::new();
+        constraints.set_audio(&JsValue::TRUE);
+        constraints.set_video(&JsValue::FALSE);
+        let media_promise = media_devices
+            .get_user_media_with_constraints(&constraints)
+            .expect("should be able to get media with constraints");
+        spawn_local(async move {
+            let stream = JsFuture::from(media_promise)
+                .await
+                .expect("should be able to execute media promise to get user audio");
+            let stream: web_sys::MediaStream = stream.dyn_into().unwrap();
+
+            let recorder = web_sys::MediaRecorder::new_with_media_stream(&stream)
+                .expect("should be able to make a new media recorder");
+
+            recorder
+                .start()
+                .expect("should be able to start recording after making a media recorder");
+
+            let chunks: Rc<RefCell<Vec<JsValue>>> = Rc::new(RefCell::new(vec![]));
+            let chunks_clone = Rc::clone(&chunks);
+            let on_data_available = Closure::wrap(Box::new(move |e: web_sys::BlobEvent| {
+                if let Some(blob) = e.data() {
+                    chunks_clone.borrow_mut().push(blob.into());
+                }
+            }) as Box<dyn FnMut(_)>);
+            let recording_stopped = Rc::new(RefCell::new(false));
+            let recording_stopped_clone = Rc::clone(&recording_stopped);
+            let on_stop = Closure::wrap(Box::new(move || {
+                *recording_stopped_clone.borrow_mut() = true;
+            }) as Box<dyn FnMut()>);
+
+            recorder.set_ondataavailable(Some(on_data_available.as_ref().unchecked_ref()));
+            recorder.set_onstop(Some(on_stop.as_ref().unchecked_ref()));
+            on_data_available.forget();
+            on_stop.forget();
+
+            while recording.get_untracked() {
+                sleep(Duration::from_millis(100)).await;
+            }
+
+            recorder.stop().unwrap();
+
+            while !*recording_stopped.borrow() {
+                sleep(Duration::from_millis(100)).await;
+            }
+
+            let blob_properties = BlobPropertyBag::new();
+            blob_properties.set_type(recorder.mime_type().as_str());
+            let blob = Blob::new_with_buffer_source_sequence_and_options(
+                &chunks.replace(Vec::new()).into(),
+                &blob_properties,
+            )
+            .unwrap();
+            let blob: gloo_file::Blob = blob.into();
+            let url = gloo_file::futures::read_as_data_url(&blob).await.unwrap();
+
+            let document = window().document().unwrap();
+            let a = document.create_element("a").unwrap();
+            let a = a.dyn_into::<HtmlAnchorElement>().unwrap();
+            a.set_href(&url);
+            a.set_download("recording.webm");
+            a.click();
+        })
+    };
+    let end_recording = move || {
+        log!("Ending recording...");
+        recording.set(false);
+        log!("Recording stopped!");
+    };
+    let toggle_recording = move || {
+        if recording.get() {
+            end_recording();
+        } else {
+            start_recording();
+        }
+    };
+    view! {
+        <button on:click={move |_| toggle_recording()}> {move || if recording.get() { "Stop recording" } else { "Start recording" }} </button>
     }
 }
 
